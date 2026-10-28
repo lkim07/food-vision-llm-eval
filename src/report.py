@@ -1,0 +1,152 @@
+"""Build summary tables and charts from results/clean/*.jsonl.
+
+Usage: python -m src.report
+Writes:
+  results/summary_processed.csv   per-model metrics on processed foods
+  results/summary_simple.csv      per-model dish-name accuracy on simple foods
+  results/summary.md              the same tables as Markdown (pasted into README)
+  docs/assets/macro_within_tol.png
+  docs/assets/macro_bias.png
+"""
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from src.scoring import (
+    NUTRIENTS, cooking_match, is_few_shot_copy, name_match, score_nutrition, score_portion,
+)
+
+CLEAN_DIR = Path("results/clean")
+ASSETS_DIR = Path("docs/assets")
+
+# Fixed model order and colors: a model keeps its color in every chart
+MODELS = ["gpt-4o-mini", "gemini-2.0-flash-lite", "claude-3-haiku"]
+LABELS = {"gpt-4o-mini": "GPT-4o mini", "gemini-2.0-flash-lite": "Gemini 2.0 Flash-Lite",
+          "claude-3-haiku": "Claude 3 Haiku"}
+COLORS = {"gpt-4o-mini": "#2a78d6", "gemini-2.0-flash-lite": "#eb6834", "claude-3-haiku": "#1baf7a"}
+NUTRIENT_LABELS = {"calories_kcal": "Calories", "protein_g": "Protein", "fat_g": "Fat",
+                   "carbohydrate_g": "Carbs"}
+TEXT, MUTED, SURFACE = "#0b0b0b", "#52514e", "#fcfcfb"
+
+
+def load(model, split):
+    path = CLEAN_DIR / f"{model}__{split}.jsonl"
+    return [json.loads(line) for line in path.open()]
+
+
+def score_records(records):
+    """One row per image with every metric we report."""
+    rows = []
+    for r in records:
+        pred = r["prediction"] if r["parse_ok"] else {}
+        truth = r["truth"]
+        row = {
+            "image_id": r["image_id"],
+            "name_correct": name_match(pred.get("dish_name"), truth["dish_name"]),
+            "cooking_correct": cooking_match(pred.get("cooking_method"), truth["cooking_method"]),
+            "few_shot_copy": is_few_shot_copy(pred.get("nutritional_profile")),
+        }
+        portion = score_portion(pred.get("portion_size"), truth["portion_size"])
+        row["portion_within_tol"] = portion["within_tol"] if portion else None
+        nutrition = score_nutrition(pred.get("nutritional_profile"), truth["nutrition"]) or {}
+        for key in NUTRIENTS:
+            s = nutrition.get(key)
+            row[f"{key}_within_tol"] = s["within_tol"] if s else None
+            row[f"{key}_pct_error"] = s["pct_error"] if s else None
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def mean_pct(series):
+    """Mean of a boolean column as a percentage, ignoring unscorable (None) rows."""
+    s = series.dropna().astype(float)
+    return round(100 * s.mean(), 1) if len(s) else None
+
+
+def summarize_processed(scored):
+    rows = []
+    for model, df in scored.items():
+        row = {"model": LABELS[model], "n": len(df),
+               "dish_name_%": mean_pct(df["name_correct"]),
+               "cooking_method_%": mean_pct(df["cooking_correct"]),
+               "portion_within_20_%": mean_pct(df["portion_within_tol"])}
+        for key in NUTRIENTS:
+            row[f"{NUTRIENT_LABELS[key].lower()}_within_20_%"] = mean_pct(df[f"{key}_within_tol"])
+        for key in NUTRIENTS:
+            errors = df[f"{key}_pct_error"].dropna()
+            row[f"{NUTRIENT_LABELS[key].lower()}_median_bias_%"] = round(100 * errors.median(), 1)
+        row["few_shot_copies"] = int(df["few_shot_copy"].sum())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def summarize_simple(scored):
+    return pd.DataFrame([{"model": LABELS[m], "n": len(df), "dish_name_%": mean_pct(df["name_correct"])}
+                         for m, df in scored.items()])
+
+
+def _style(ax, title, ylabel):
+    ax.set_facecolor(SURFACE)
+    ax.set_title(title, loc="left", fontsize=13, color=TEXT, pad=12)
+    ax.set_ylabel(ylabel, color=MUTED)
+    ax.tick_params(colors=MUTED, length=0)
+    for side in ["top", "right", "left"]:
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.grid(axis="y", color="#ebeae6", linewidth=0.8)
+    ax.set_axisbelow(True)
+
+
+def grouped_bar_chart(summary, column_suffix, title, ylabel, out_path, baseline_zero=False):
+    """Nutrients on the x-axis, one bar per model, value labels on every bar."""
+    keys = [NUTRIENT_LABELS[k].lower() for k in NUTRIENTS]
+    x = np.arange(len(keys))
+    width = 0.26
+    fig, ax = plt.subplots(figsize=(9, 5), facecolor=SURFACE)
+    for i, model in enumerate(MODELS):
+        values = summary.loc[summary["model"] == LABELS[model], [f"{k}{column_suffix}" for k in keys]].iloc[0]
+        bars = ax.bar(x + (i - 1) * width, values, width - 0.03, color=COLORS[model], label=LABELS[model])
+        for bar, v in zip(bars, values):
+            offset = 1 if v >= 0 else -1
+            ax.text(bar.get_x() + bar.get_width() / 2, v + offset, f"{v:.0f}",
+                    ha="center", va="bottom" if v >= 0 else "top", fontsize=9, color=TEXT)
+    if baseline_zero:
+        ax.axhline(0, color=MUTED, linewidth=1)
+        low, high = ax.get_ylim()
+        ax.set_ylim(low - 4, high + 4)  # room for labels under negative bars
+    ax.set_xticks(x, [NUTRIENT_LABELS[k] for k in NUTRIENTS], color=TEXT)
+    _style(ax, title, ylabel)
+    ax.legend(frameon=False, loc="upper center", ncol=3, fontsize=9, bbox_to_anchor=(0.5, -0.08))
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, facecolor=SURFACE)
+    plt.close(fig)
+
+
+def main():
+    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    processed = {m: score_records(load(m, "processed")) for m in MODELS}
+    simple = {m: score_records(load(m, "simple")) for m in MODELS}
+
+    proc_summary = summarize_processed(processed)
+    simple_summary = summarize_simple(simple)
+    proc_summary.to_csv("results/summary_processed.csv", index=False)
+    simple_summary.to_csv("results/summary_simple.csv", index=False)
+    with open("results/summary.md", "w") as f:
+        f.write("## Processed foods (MM-Food-100K)\n\n" + proc_summary.to_markdown(index=False) + "\n\n")
+        f.write("## Simple foods (fruit & vegetable dataset)\n\n" + simple_summary.to_markdown(index=False) + "\n")
+
+    grouped_bar_chart(proc_summary, "_within_20_%",
+                      "Share of predictions within ±20% of the label (processed foods)",
+                      "% of images", ASSETS_DIR / "macro_within_tol.png")
+    grouped_bar_chart(proc_summary, "_median_bias_%",
+                      "Median signed error: negative = model underestimates",
+                      "Median % error", ASSETS_DIR / "macro_bias.png", baseline_zero=True)
+    print(proc_summary.T.to_string(header=False))
+    print(simple_summary.to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()
