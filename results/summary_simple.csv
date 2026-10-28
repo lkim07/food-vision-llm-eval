@@ -1,0 +1,4 @@
+model,n,dish_name_%
+GPT-4o mini,100,92.0
+Gemini 2.0 Flash-Lite,100,94.0
+Claude 3 Haiku,100,88.0
