@@ -12,11 +12,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.prompts import NUTRITION_PROMPT  # noqa: E402
 from src.providers import call_model, load_models  # noqa: E402
 
+MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+
 
 def main(image_path):
     load_dotenv()
-    image_bytes = Path(image_path).read_bytes()
-    mime = "image/png" if image_path.lower().endswith(".png") else "image/jpeg"
+    path = Path(image_path)
+    if not path.is_file():
+        sys.exit(f"Image not found: {path.resolve()}")
+    mime = MIME_TYPES.get(path.suffix.lower())
+    if mime is None:
+        sys.exit(f"Unsupported image type '{path.suffix}'. Use one of: {', '.join(MIME_TYPES)}")
+    image_bytes = path.read_bytes()
+
     for model in load_models():
         try:
             r = call_model(model, image_bytes, NUTRITION_PROMPT, mime)
