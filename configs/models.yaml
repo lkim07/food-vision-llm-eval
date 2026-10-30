@@ -1,0 +1,17 @@
+# Models under test. To swap a retired model, change model_id here; no code changes needed.
+# Prices are USD per 1M tokens, used only to estimate run cost. Check provider pricing pages before a run.
+models:
+  - name: gpt-4o-mini
+    provider: openai
+    model_id: gpt-4o-mini
+    price_per_mtok: {input: 0.15, output: 0.60}
+
+  - name: gemini-2.5-flash-lite
+    provider: gemini
+    model_id: gemini-2.5-flash-lite
+    price_per_mtok: {input: 0.10, output: 0.40}
+
+  - name: claude-haiku-4.5
+    provider: anthropic
+    model_id: claude-haiku-4-5-20251001
+    price_per_mtok: {input: 1.00, output: 5.00}

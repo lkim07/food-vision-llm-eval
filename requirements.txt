@@ -3,3 +3,8 @@ pandas
 matplotlib
 tabulate
 pytest
+pyyaml
+python-dotenv
+openai
+anthropic>=2.0
+google-genai
