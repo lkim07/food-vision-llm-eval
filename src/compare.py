@@ -108,7 +108,8 @@ def rank_shift_chart(summary, models, out_path):
     ax.set_xticks(xs, [label.replace(" (", "\n(") for label in DATASETS.values()], color=TEXT)
     ax.set_xlim(-0.35, 1.9)
     ax.set_ylabel("Macronutrients within ±20%, average of 4 (%)", color=MUTED)
-    ax.set_title("Macronutrient accuracy by label source", loc="left", fontsize=13, color=TEXT)
+    ax.set_title("GPT-4o mini's lead on GPT-4o labels disappears on measured labels",
+                 loc="left", fontsize=12, color=TEXT)
     ax.tick_params(colors=MUTED, length=0)
     for side in ["top", "right", "left", "bottom"]:
         ax.spines[side].set_visible(False)
